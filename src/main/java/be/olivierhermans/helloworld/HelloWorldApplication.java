@@ -1,5 +1,8 @@
 package be.olivierhermans.helloworld;
 
+import be.olivierhermans.helloworld.dao.CustomStatusDao;
+import be.olivierhermans.helloworld.dao.CustomStatusRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.*;
@@ -13,27 +16,35 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.persistence.EntityManagerFactory;
 import javax.sql.DataSource;
+import java.time.LocalDateTime;
 
 @EnableBatchProcessing
 @SpringBootApplication
+@RequiredArgsConstructor
 public class HelloWorldApplication {
 
+    private final CustomStatusRepository repository;
+    private final JobBuilderFactory jobBuilderFactory;
+    private final StepBuilderFactory stepBuilderFactory;
+
     @Bean
-    public Step step(StepBuilderFactory stepBuilderFactory) {
+    public Step step() {
         return stepBuilderFactory
                 .get("step1")
                 .tasklet((contribution, chunkContext) -> {
                     System.out.println("Hello, World!");
-                    System.exit(0);
-                    return RepeatStatus.FINISHED;
+                    repository.save(CustomStatusDao.builder().status("now: " + LocalDateTime.now().toString()).build());
+//                    return RepeatStatus.FINISHED;
+                    throw new RuntimeException("Test exception");
                 })
                 .allowStartIfComplete(true)
                 .build();
+        // set no rollback on a fault tolerant step (chunk based only) to prevent rolling back custom db updates
     }
 
     @Bean
-    public Job job(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory) {
-        return jobBuilderFactory.get("job").start(step(stepBuilderFactory)).build();
+    public Job job() {
+        return jobBuilderFactory.get("job").start(step()).build();
     }
 
     @Bean
