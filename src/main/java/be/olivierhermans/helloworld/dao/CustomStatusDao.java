@@ -1,7 +1,6 @@
 package be.olivierhermans.helloworld.dao;
 
-import lombok.Builder;
-import lombok.Getter;
+import lombok.*;
 
 import javax.persistence.*;
 
