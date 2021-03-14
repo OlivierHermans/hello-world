@@ -2,9 +2,13 @@ package be.olivierhermans.helloworld;
 
 import be.olivierhermans.helloworld.service.CustomStatusService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobExecutionListener;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.*;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.repeat.RepeatStatus;
@@ -13,7 +17,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.vendor.HibernateJpaDialect;
-import org.springframework.retry.RetryPolicy;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.persistence.EntityManagerFactory;
@@ -22,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@Slf4j
 @EnableBatchProcessing
 @SpringBootApplication
 @RequiredArgsConstructor
@@ -35,7 +39,7 @@ public class HelloWorldApplication {
     public ItemReader<String> itemReader() {
         AtomicInteger counter = new AtomicInteger(0);
         return () -> {
-            System.out.println("In ItemReader::read");
+            log.info("In ItemReader::read");
             int value = counter.getAndIncrement();
             return value == 0 ? "now: " + LocalDateTime.now().toString() : null;
         };
@@ -44,7 +48,7 @@ public class HelloWorldApplication {
     @Bean
     public ItemWriter<String> itemWriter() {
         return (List<? extends String> list) -> {
-            System.out.println(String.format("In ItemWriter::write with %d items", list.size()));
+            log.info(String.format("In ItemWriter::write with %d items", list.size()));
             list.stream().forEach(service::createCustomStatus);
             throw new IllegalStateException("Test exception from item writer");
         };
@@ -55,12 +59,12 @@ public class HelloWorldApplication {
         return stepBuilderFactory
                 .get("step1")
                 .tasklet((contribution, chunkContext) -> {
-                    System.out.println("Hello, World!");
+                    log.info("Hello, World!");
                     service.createCustomStatus("now: " + LocalDateTime.now().toString());
                     return RepeatStatus.FINISHED;
 //                    throw new RuntimeException("Test exception from tasklet");
                 })
-                .allowStartIfComplete(true)
+                //.allowStartIfComplete(true) ==> Add an incrementer to the job instead
                 .build();
     }
 
@@ -73,15 +77,37 @@ public class HelloWorldApplication {
                 .writer(itemWriter())
                 .faultTolerant()
                 .skip(IllegalStateException.class)
+                .skipLimit(Integer.MAX_VALUE)
                 .noRollback(IllegalStateException.class)
                 .noRetry(IllegalStateException.class)
-                .allowStartIfComplete(true)
+                //.allowStartIfComplete(true) ==> Add an incrementer to the job instead
                 .build();
+    }
+
+    private JobExecutionListener jobExecutionListener() {
+        return new JobExecutionListener() {
+            @Override
+            public void beforeJob(JobExecution execution) {
+                log.info("Starting job {}", execution.getJobInstance().getJobName());
+            }
+
+            @Override
+            public void afterJob(JobExecution execution) {
+                log.info("Job {} has completed with status {}",
+                        execution.getJobInstance().getJobName(),
+                        execution.getStatus());
+            }
+        };
     }
 
     @Bean
     public Job job() {
-        return jobBuilderFactory.get("job").start(chunkStep()).build();
+        return jobBuilderFactory
+                .get("jobWithIncrementer")
+                .start(chunkStep())
+                .incrementer(new RunIdIncrementer())
+                .listener(jobExecutionListener())
+                .build();
     }
 
     @Bean
@@ -101,5 +127,4 @@ public class HelloWorldApplication {
     public static void main(String[] args) {
         SpringApplication.run(HelloWorldApplication.class, args);
     }
-
 }
